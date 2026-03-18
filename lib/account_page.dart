@@ -8,6 +8,7 @@ import 'favourite_page.dart';
 import 'payment_methods_page.dart';
 import 'store_home_page.dart';
 import 'data/theme_provider.dart';
+import 'edit_profile_page.dart';
 
 class AccountPage extends ConsumerStatefulWidget {
   const AccountPage({super.key});
@@ -75,7 +76,12 @@ class _AccountPageState extends ConsumerState<AccountPage> with TickerProviderSt
             const SizedBox(height: 6),
             _profileHeader(
               name: 'Burhan Rahman',
-              onEdit: () => _toast('Edit profile coming soon'),
+              onEdit: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const EditProfilePage()),
+                );
+              },
             ),
             const SizedBox(height: 16),
             Row(
