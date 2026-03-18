@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'cart_page.dart';
 import 'delivery_address_page.dart';
@@ -6,15 +7,16 @@ import 'explore_page.dart';
 import 'favourite_page.dart';
 import 'payment_methods_page.dart';
 import 'store_home_page.dart';
+import 'data/theme_provider.dart';
 
-class AccountPage extends StatefulWidget {
+class AccountPage extends ConsumerStatefulWidget {
   const AccountPage({super.key});
 
   @override
-  State<AccountPage> createState() => _AccountPageState();
+  ConsumerState<AccountPage> createState() => _AccountPageState();
 }
 
-class _AccountPageState extends State<AccountPage> with TickerProviderStateMixin {
+class _AccountPageState extends ConsumerState<AccountPage> with TickerProviderStateMixin {
   int _currentIndex = 4; // Account is index 4
   late List<AnimationController> _navAnimationControllers;
   late List<Animation<double>> _navScaleAnimations;
@@ -111,6 +113,21 @@ class _AccountPageState extends State<AccountPage> with TickerProviderStateMixin
               ],
             ),
             const SizedBox(height: 22),
+            _sectionHeader('App Settings'),
+            const SizedBox(height: 10),
+            _settingsTile(
+              icon: ref.watch(themeProvider) == ThemeMode.dark ? Icons.dark_mode : Icons.light_mode,
+              title: 'Dark Mode',
+              trailing: Switch.adaptive(
+                value: ref.watch(themeProvider) == ThemeMode.dark,
+                onChanged: (_) {
+                  ref.read(themeProvider.notifier).toggleTheme();
+                },
+              ),
+              onTap: () {
+                ref.read(themeProvider.notifier).toggleTheme();
+              },
+            ),
             _sectionHeader('Account Settings'),
             const SizedBox(height: 10),
             _settingsTile(
@@ -295,6 +312,7 @@ class _AccountPageState extends State<AccountPage> with TickerProviderStateMixin
     required IconData icon,
     required String title,
     required VoidCallback onTap,
+    Widget? trailing,
   }) {
     return InkWell(
       onTap: onTap,
@@ -324,7 +342,7 @@ class _AccountPageState extends State<AccountPage> with TickerProviderStateMixin
                 ),
               ),
             ),
-            const Icon(Icons.chevron_right, color: _muted),
+            trailing ?? const Icon(Icons.chevron_right, color: _muted),
           ],
         ),
       ),

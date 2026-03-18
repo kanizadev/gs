@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'data/cart_provider.dart';
 import 'dart:async';
 
 import 'cart_page.dart';
@@ -12,14 +13,14 @@ import 'data/product_repository.dart';
 
 enum _ExploreSortBy { name, price }
 
-class ExplorePage extends StatefulWidget {
+class ExplorePage extends ConsumerStatefulWidget {
   const ExplorePage({super.key});
 
   @override
-  State<ExplorePage> createState() => _ExplorePageState();
+  ConsumerState<ExplorePage> createState() => _ExplorePageState();
 }
 
-class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin {
+class _ExplorePageState extends ConsumerState<ExplorePage> with TickerProviderStateMixin {
   int _currentIndex = 1; // Explore is index 1
   late List<AnimationController> _navAnimationControllers;
   late List<Animation<double>> _navScaleAnimations;
@@ -34,8 +35,6 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
   RangeValues? _priceRangeFilter;
   _ExploreSortBy _sortBy = _ExploreSortBy.name;
   bool _sortAscending = true;
-
-  final Map<String, int> _productQuantities = <String, int>{};
 
   final ProductRepository _repo = ProductRepository();
   List<Product> _products = const <Product>[];
@@ -353,13 +352,12 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
   }
 
   void _add(String id) {
-    setState(() {
-      _productQuantities[id] = (_productQuantities[id] ?? 0) + 1;
-    });
+    ref.read(cartProvider.notifier).addWithQty(id, 1);
   }
 
   @override
   Widget build(BuildContext context) {
+    final cart = ref.watch(cartProvider);
     final products = _filteredProducts;
     final hasActiveFilters =
         _priceRangeFilter != null || _sortBy != _ExploreSortBy.name || !_sortAscending;
@@ -520,7 +518,7 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
                       itemBuilder: (context, i) {
                         final p = products[i];
                         final id = p.id;
-                        final qty = _productQuantities[id] ?? 0;
+                        final qty = cart[id] ?? 0;
                         final price = p.price;
                         final name = p.name;
                         final unit = p.unit;

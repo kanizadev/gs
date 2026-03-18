@@ -1,49 +1,35 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'data/cart_provider.dart';
 import 'product_detail_page.dart';
 import 'data/product.dart';
 import 'data/product_repository.dart';
 
-class ProductsPage extends StatefulWidget {
+class ProductsPage extends ConsumerStatefulWidget {
   const ProductsPage({super.key});
 
   @override
-  State<ProductsPage> createState() => _ProductsPageState();
+  ConsumerState<ProductsPage> createState() => _ProductsPageState();
 }
 
-class _ProductsPageState extends State<ProductsPage> {
-  // Product cart state
-  final Map<String, int> _productQuantities = <String, int>{};
+class _ProductsPageState extends ConsumerState<ProductsPage> {
   final ProductRepository _repo = ProductRepository();
 
   void _addToCart(String productId) {
-    setState(() {
-      _productQuantities[productId] = 1;
-    });
+    ref.read(cartProvider.notifier).add(productId);
   }
 
   void _decreaseQuantity(String productId) {
-    setState(() {
-      if (_productQuantities.containsKey(productId)) {
-        int currentQty = _productQuantities[productId]!;
-        if (currentQty > 1) {
-          _productQuantities[productId] = currentQty - 1;
-        } else {
-          _productQuantities.remove(productId);
-        }
-      }
-    });
+    ref.read(cartProvider.notifier).decrease(productId);
   }
 
   void _increaseQuantity(String productId) {
-    setState(() {
-      if (_productQuantities.containsKey(productId)) {
-        _productQuantities[productId] = _productQuantities[productId]! + 1;
-      }
-    });
+    ref.read(cartProvider.notifier).increase(productId);
   }
 
   @override
   Widget build(BuildContext context) {
+    final cart = ref.watch(cartProvider);
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
@@ -118,7 +104,7 @@ class _ProductsPageState extends State<ProductsPage> {
                       itemBuilder: (context, index) {
                         final product = products[index];
                         final productId = product.id;
-                        final quantity = _productQuantities[productId] ?? 0;
+                        final quantity = cart[productId] ?? 0;
 
                     return Card(
                       shape: RoundedRectangleBorder(

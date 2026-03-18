@@ -1,5 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_animate/flutter_animate.dart';
+import 'data/cart_provider.dart';
+import 'data/product_provider.dart';
 import 'products_page.dart';
 import 'cart_page.dart';
 import 'explore_page.dart';
@@ -13,14 +17,14 @@ import 'category_page.dart';
 
 enum _HomeSortBy { name, price }
 
-class StoreHomePage extends StatefulWidget {
+class StoreHomePage extends ConsumerStatefulWidget {
   const StoreHomePage({super.key});
 
   @override
-  State<StoreHomePage> createState() => _StoreHomePageState();
+  ConsumerState<StoreHomePage> createState() => _StoreHomePageState();
 }
 
-class _StoreHomePageState extends State<StoreHomePage>
+class _StoreHomePageState extends ConsumerState<StoreHomePage>
     with TickerProviderStateMixin {
   int _currentIndex = 0;
   int _currentSliderIndex = 0;
@@ -29,8 +33,7 @@ class _StoreHomePageState extends State<StoreHomePage>
   late List<AnimationController> _navAnimationControllers;
   late List<Animation<double>> _navScaleAnimations;
 
-  // Product cart state
-  final Map<String, int> _productQuantities = <String, int>{};
+  // The local map is removed and replaced by ref.watch(cartProvider) inside build.
 
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
@@ -168,30 +171,15 @@ class _StoreHomePageState extends State<StoreHomePage>
   }
 
   void _addToCart(String productId) {
-    setState(() {
-      _productQuantities[productId] = 1;
-    });
+    ref.read(cartProvider.notifier).add(productId);
   }
 
   void _decreaseQuantity(String productId) {
-    setState(() {
-      if (_productQuantities.containsKey(productId)) {
-        int currentQty = _productQuantities[productId]!;
-        if (currentQty > 1) {
-          _productQuantities[productId] = currentQty - 1;
-        } else {
-          _productQuantities.remove(productId);
-        }
-      }
-    });
+    ref.read(cartProvider.notifier).decrease(productId);
   }
 
   void _increaseQuantity(String productId) {
-    setState(() {
-      if (_productQuantities.containsKey(productId)) {
-        _productQuantities[productId] = _productQuantities[productId]! + 1;
-      }
-    });
+    ref.read(cartProvider.notifier).increase(productId);
   }
 
   void _openHomeFilterSheet() {
@@ -398,6 +386,7 @@ class _StoreHomePageState extends State<StoreHomePage>
 
   @override
   Widget build(BuildContext context) {
+    final cart = ref.watch(cartProvider);
     final filteredOffers = _filteredSpecialOffers;
     final hasActiveFilters = _priceRangeFilter != null ||
         _sortBy != _HomeSortBy.name ||
@@ -686,7 +675,7 @@ class _StoreHomePageState extends State<StoreHomePage>
                         itemBuilder: (context, index) {
                           final product = filteredOffers[index];
                           final productId = product.id;
-                          int quantity = _productQuantities[productId] ?? 0;
+                          int quantity = cart[productId] ?? 0;
                           final price = product.price;
                           final name = product.name;
                           final unit = product.unit;
@@ -932,12 +921,12 @@ class _StoreHomePageState extends State<StoreHomePage>
                                       color: Color(0xFF868889),
                                     ),
                                   ),
-                                ],
+                                  ],
+                                ),
                               ),
-                            ),
-                          );
-                        },
-                      ))),
+                            ).animate().fadeIn(duration: 400.ms, delay: (index * 50).ms).slideX(begin: 0.05, end: 0);
+                          },
+                        ))),
                     ),
 
                     const SizedBox(height: 30),

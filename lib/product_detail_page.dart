@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'favorites_store.dart';
+import 'data/cart_provider.dart';
+import 'data/favorites_provider.dart';
 
-class ProductDetailPage extends StatefulWidget {
+class ProductDetailPage extends ConsumerStatefulWidget {
   const ProductDetailPage({
     super.key,
     required this.id,
@@ -25,20 +27,16 @@ class ProductDetailPage extends StatefulWidget {
   final double rating;
 
   @override
-  State<ProductDetailPage> createState() => _ProductDetailPageState();
+  ConsumerState<ProductDetailPage> createState() => _ProductDetailPageState();
 }
 
-class _ProductDetailPageState extends State<ProductDetailPage> {
+class _ProductDetailPageState extends ConsumerState<ProductDetailPage> {
   int _qty = 1;
-  bool _favorite = false;
   bool _detailExpanded = true;
-
-  FavoritesStore get _store => FavoritesStore.instance;
 
   @override
   void initState() {
     super.initState();
-    _favorite = _store.isFavorite(widget.id);
   }
 
   void _decQty() {
@@ -134,31 +132,18 @@ class _ProductDetailPageState extends State<ProductDetailPage> {
                             ],
                           ),
                         ),
-                        IconButton(
-                          onPressed: () {
-                            setState(() {
-                              _favorite = !_favorite;
-                              if (_favorite) {
-                                _store.add(
-                                  FavoriteProduct(
-                                    id: widget.id,
-                                    name: widget.name,
-                                    unit: widget.unit,
-                                    price: widget.price,
-                                    imagePath: widget.imagePath,
-                                  ),
-                                );
-                              } else {
-                                _store.remove(widget.id);
-                              }
-                            });
-                          },
-                          icon: Icon(
-                            _favorite ? Icons.favorite : Icons.favorite_border,
-                            color:
-                                _favorite ? const Color(0xFF6CC51D) : Colors.black,
-                          ),
-                        ),
+                        Consumer(builder: (context, ref, child) {
+                          final isFav = ref.watch(favoritesProvider).contains(widget.id);
+                          return IconButton(
+                            onPressed: () {
+                              ref.read(favoritesProvider.notifier).toggle(widget.id);
+                            },
+                            icon: Icon(
+                              isFav ? Icons.favorite : Icons.favorite_border,
+                              color: isFav ? const Color(0xFF6CC51D) : Colors.black,
+                            ),
+                          );
+                        }),
                       ],
                     ),
                     const SizedBox(height: 10),
@@ -326,6 +311,7 @@ class _ProductDetailPageState extends State<ProductDetailPage> {
                       ),
                     ),
                     onPressed: () {
+                      ref.read(cartProvider.notifier).addWithQty(widget.id, _qty);
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(content: Text('Added $_qty to basket')),
                       );

@@ -1,48 +1,24 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'data/cart_provider.dart';
+import 'data/product_provider.dart';
+import 'checkout_page.dart';
 import 'explore_page.dart';
 import 'favourite_page.dart';
 import 'store_home_page.dart';
 import 'account_page.dart';
 
-class CartPage extends StatefulWidget {
+class CartPage extends ConsumerStatefulWidget {
   const CartPage({super.key});
 
   @override
-  State<CartPage> createState() => _CartPageState();
+  ConsumerState<CartPage> createState() => _CartPageState();
 }
 
-class _CartPageState extends State<CartPage> with TickerProviderStateMixin {
+class _CartPageState extends ConsumerState<CartPage> with TickerProviderStateMixin {
   int _currentIndex = 2; // Cart is index 2
   late List<AnimationController> _navAnimationControllers;
   late List<Animation<double>> _navScaleAnimations;
-
-  // Cart items data - prices adjusted to match $12.96 total shown in image
-  final List<Map<String, dynamic>> _cartItems = [
-    {
-      'id': 'egg_chicken_red',
-      'image': 'images/egg.png', // You may need to add this image
-      'name': 'Egg Chicken Red',
-      'description': '4pcs, Price',
-      'price': 1.99,
-      'quantity': 1,
-    },
-    {
-      'id': 'organic_bananas',
-      'image': 'images/banana.png', // You may need to add this image
-      'name': 'Organic Bananas',
-      'description': '12kg, Price',
-      'price': 3.00,
-      'quantity': 1,
-    },
-    {
-      'id': 'ginger',
-      'image': 'images/ginger.png', // You may need to add this image
-      'name': 'Ginger',
-      'description': '250gm, Price',
-      'price': 7.97, // Adjusted to make total = $12.96 (1.99 + 3.00 + 7.97)
-      'quantity': 1,
-    },
-  ];
 
   // Free delivery threshold
   final double _freeDeliveryThreshold = 15.00;
@@ -79,50 +55,61 @@ class _CartPageState extends State<CartPage> with TickerProviderStateMixin {
     super.dispose();
   }
 
-  double get _totalAmount {
-    return _cartItems.fold(
+  double _getTotalAmount(List<Map<String, dynamic>> items) {
+    return items.fold(
       0.0,
-      (sum, item) =>
-          sum + (item['price'] as double) * (item['quantity'] as int),
+      (sum, item) => sum + (item['price'] as double) * (item['quantity'] as int),
     );
   }
 
-  double get _amountUntilFreeDelivery {
-    final remaining = _freeDeliveryThreshold - _totalAmount;
+  double _getAmountUntilFreeDelivery(double total) {
+    final remaining = _freeDeliveryThreshold - total;
     return remaining > 0 ? remaining : 0;
   }
 
-  double get _deliveryProgress {
-    final progress = _totalAmount / _freeDeliveryThreshold;
+  double _getDeliveryProgress(double total) {
+    final progress = total / _freeDeliveryThreshold;
     return progress > 1.0 ? 1.0 : progress;
   }
 
-  void _increaseQuantity(int index) {
-    setState(() {
-      _cartItems[index]['quantity'] =
-          (_cartItems[index]['quantity'] as int) + 1;
-    });
+  void _increaseQuantity(String id) {
+    ref.read(cartProvider.notifier).increase(id);
   }
 
-  void _decreaseQuantity(int index) {
-    setState(() {
-      if (_cartItems[index]['quantity'] > 1) {
-        _cartItems[index]['quantity'] =
-            (_cartItems[index]['quantity'] as int) - 1;
-      } else {
-        _removeItem(index);
-      }
-    });
+  void _decreaseQuantity(String id) {
+    ref.read(cartProvider.notifier).decrease(id);
   }
 
-  void _removeItem(int index) {
-    setState(() {
-      _cartItems.removeAt(index);
-    });
+  void _removeItem(String id) {
+    ref.read(cartProvider.notifier).remove(id);
   }
 
   @override
   Widget build(BuildContext context) {
+    final cartRaw = ref.watch(cartProvider);
+    final productsAsync = ref.watch(allProductsProvider);
+    
+    final cartItems = productsAsync.maybeWhen(
+      data: (products) {
+        return cartRaw.entries.map((entry) {
+          final productOpt = products.where((p) => p.id == entry.key).firstOrNull;
+          if (productOpt == null) return null;
+          return {
+            'id': productOpt.id,
+            'image': productOpt.imagePath,
+            'name': productOpt.name,
+            'price': productOpt.price,
+            'description': productOpt.unit,
+            'quantity': entry.value,
+          };
+        }).where((e) => e != null).cast<Map<String, dynamic>>().toList();
+      },
+      orElse: () => <Map<String, dynamic>>[],
+    );
+    
+    final _totalAmount = _getTotalAmount(cartItems);
+    final _amountUntilFreeDelivery = _getAmountUntilFreeDelivery(_totalAmount);
+    final _deliveryProgress = _getDeliveryProgress(_totalAmount);
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
@@ -210,7 +197,7 @@ class _CartPageState extends State<CartPage> with TickerProviderStateMixin {
 
             // Cart Items List
             Expanded(
-              child: _cartItems.isEmpty
+              child: cartItems.isEmpty
                   ? const Center(
                       child: Text(
                         'Your cart is empty',
@@ -224,13 +211,13 @@ class _CartPageState extends State<CartPage> with TickerProviderStateMixin {
                     )
                   : ListView.builder(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
-                      itemCount: _cartItems.length,
+                      itemCount: cartItems.length,
                       itemBuilder: (context, index) {
-                        final item = _cartItems[index];
+                        final item = cartItems[index];
                         return Column(
                           children: [
                             _buildCartItem(item, index),
-                            if (index < _cartItems.length - 1)
+                            if (index < cartItems.length - 1)
                               const Divider(
                                 height: 1,
                                 color: Color(0xFFEDEDED),
@@ -243,7 +230,7 @@ class _CartPageState extends State<CartPage> with TickerProviderStateMixin {
             ),
 
             // Checkout Button
-            if (_cartItems.isNotEmpty)
+            if (cartItems.isNotEmpty)
               Container(
                 padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
                 decoration: BoxDecoration(
@@ -261,7 +248,12 @@ class _CartPageState extends State<CartPage> with TickerProviderStateMixin {
                   top: false,
                   child: InkWell(
                     onTap: () {
-                      // Handle checkout
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const CheckoutPage(),
+                        ),
+                      );
                     },
                     borderRadius: BorderRadius.circular(14),
                     child: Container(
@@ -277,10 +269,10 @@ class _CartPageState extends State<CartPage> with TickerProviderStateMixin {
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             const Text(
-                              'Go to Checkout',
+                              'Checkout',
                               style: TextStyle(
                                 color: Colors.white,
-                                fontSize: 16,
+                                fontSize: 15,
                                 fontWeight: FontWeight.w600,
                                 fontFamily: 'Poppins',
                               ),
@@ -381,7 +373,7 @@ class _CartPageState extends State<CartPage> with TickerProviderStateMixin {
                     Material(
                       color: Colors.transparent,
                       child: InkWell(
-                        onTap: () => _removeItem(index),
+                        onTap: () => _removeItem(item['id'] as String),
                         borderRadius: BorderRadius.circular(4),
                         child: const Padding(
                           padding: EdgeInsets.all(4.0),
@@ -405,7 +397,7 @@ class _CartPageState extends State<CartPage> with TickerProviderStateMixin {
                         Material(
                           color: Colors.transparent,
                           child: InkWell(
-                            onTap: () => _decreaseQuantity(index),
+                            onTap: () => _decreaseQuantity(item['id'] as String),
                             borderRadius: BorderRadius.circular(15),
                             child: Container(
                               width: 30,
@@ -440,7 +432,7 @@ class _CartPageState extends State<CartPage> with TickerProviderStateMixin {
                         Material(
                           color: Colors.transparent,
                           child: InkWell(
-                            onTap: () => _increaseQuantity(index),
+                            onTap: () => _increaseQuantity(item['id'] as String),
                             borderRadius: BorderRadius.circular(15),
                             child: Container(
                               width: 30,
