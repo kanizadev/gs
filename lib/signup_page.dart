@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'verification_page.dart';
 import 'login_page.dart';
+import 'core/auth_service.dart';
 
 class SignupPage extends StatefulWidget {
   const SignupPage({super.key});
@@ -24,6 +24,7 @@ class _SignupPageState extends State<SignupPage>
 
   bool _isPasswordVisible = false;
   String? _passwordError;
+  bool _isLoading = false;
 
   @override
   void initState() {
@@ -77,22 +78,34 @@ class _SignupPageState extends State<SignupPage>
     }
   }
 
-  void _handleSignUp() {
+  Future<void> _handleSignUp() async {
     _checkPasswordMatch();
 
-    if (_formKey.currentState!.validate()) {
-      if (_passwordController.text != _retypePasswordController.text) {
-        setState(() {
-          _passwordError = "The password didn't match.";
-        });
-        return;
-      }
+    if (!_formKey.currentState!.validate()) return;
+    if (_passwordController.text != _retypePasswordController.text) {
+      setState(() {
+        _passwordError = "The password didn't match.";
+      });
+      return;
+    }
 
-      // Navigate to verification page
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (context) => const VerificationPage()),
+    setState(() => _isLoading = true);
+    try {
+      await AuthService.signUpWithEmail(
+        email: _emailController.text,
+        password: _passwordController.text,
       );
+      if (!mounted) return;
+      Navigator.popUntil(context, (route) => route.isFirst);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _passwordError = AuthService.readableError(e);
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -503,7 +516,7 @@ class _SignupPageState extends State<SignupPage>
                                 width: 354,
                                 height: 60,
                                 child: ElevatedButton(
-                                  onPressed: _handleSignUp,
+                                  onPressed: _isLoading ? null : _handleSignUp,
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: Colors.black,
                                     foregroundColor: Colors.white,
@@ -513,16 +526,25 @@ class _SignupPageState extends State<SignupPage>
                                       borderRadius: BorderRadius.circular(30),
                                     ),
                                   ),
-                                  child: const Text(
-                                    'Sign Up',
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 15,
-                                      fontWeight:
-                                          FontWeight.w500, // Poppins Medium
-                                      fontFamily: 'Poppins',
-                                    ),
-                                  ),
+                                  child: _isLoading
+                                      ? const SizedBox(
+                                          width: 20,
+                                          height: 20,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: Colors.white,
+                                          ),
+                                        )
+                                      : const Text(
+                                          'Sign Up',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 15,
+                                            fontWeight:
+                                                FontWeight.w500, // Poppins Medium
+                                            fontFamily: 'Poppins',
+                                          ),
+                                        ),
                                 ),
                               ),
                             ),

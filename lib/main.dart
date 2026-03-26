@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'auth_gate.dart';
 import 'get_started_page.dart';
 import 'data/theme_provider.dart';
 
@@ -12,11 +14,21 @@ void main() async {
   await Hive.openBox<bool>('favorites');
   await Hive.openBox<bool>('settings');
 
-  runApp(const ProviderScope(child: MyApp()));
+  var firebaseReady = false;
+  try {
+    await Firebase.initializeApp();
+    firebaseReady = true;
+  } catch (_) {
+    firebaseReady = false;
+  }
+
+  runApp(ProviderScope(child: MyApp(firebaseReady: firebaseReady)));
 }
 
 class MyApp extends ConsumerWidget {
-  const MyApp({super.key});
+  const MyApp({super.key, required this.firebaseReady});
+
+  final bool firebaseReady;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -64,7 +76,7 @@ class MyApp extends ConsumerWidget {
           ),
         ),
       ),
-      home: const GetStartedPage(),
+      home: firebaseReady ? const AuthGate() : const GetStartedPage(),
       debugShowCheckedModeBanner: false,
     );
   }

@@ -9,6 +9,8 @@ import 'payment_methods_page.dart';
 import 'store_home_page.dart';
 import 'data/theme_provider.dart';
 import 'edit_profile_page.dart';
+import 'get_started_page.dart';
+import 'core/auth_service.dart';
 
 class AccountPage extends ConsumerStatefulWidget {
   const AccountPage({super.key});
@@ -25,6 +27,7 @@ class _AccountPageState extends ConsumerState<AccountPage> with TickerProviderSt
   static const Color _accentGreen = Color(0xFF6CC51D);
   static const Color _muted = Color(0xFF7A7D87);
   static const Color _tileBg = Color(0xFFF4F6FB);
+  bool _loggingOut = false;
 
   @override
   void initState() {
@@ -192,7 +195,7 @@ class _AccountPageState extends ConsumerState<AccountPage> with TickerProviderSt
                   borderRadius: BorderRadius.circular(14),
                 ),
               ),
-              onPressed: () => _toast('Log out coming soon'),
+              onPressed: _loggingOut ? null : _handleLogout,
               child: const Text(
                 'Log Out',
                 style: TextStyle(
@@ -357,6 +360,26 @@ class _AccountPageState extends ConsumerState<AccountPage> with TickerProviderSt
 
   void _toast(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  Future<void> _handleLogout() async {
+    setState(() => _loggingOut = true);
+    try {
+      await AuthService.signOut();
+      if (!mounted) return;
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (context) => const GetStartedPage()),
+        (_) => false,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      _toast(AuthService.readableError(e));
+    } finally {
+      if (mounted) {
+        setState(() => _loggingOut = false);
+      }
+    }
   }
 
   Widget _buildCustomBottomNavBar() {

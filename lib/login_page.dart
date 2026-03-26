@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'signup_page.dart';
 import 'change_password_page.dart';
-import 'store_home_page.dart';
+import 'core/auth_service.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -22,6 +22,7 @@ class _LoginPageState extends State<LoginPage>
   bool _isPasswordVisible = false;
   bool _rememberMe = false;
   String? _passwordError;
+  bool _isLoading = false;
 
   bool _isValidEmail(String email) {
     // Email validation pattern: example@example.com
@@ -53,17 +54,30 @@ class _LoginPageState extends State<LoginPage>
     super.dispose();
   }
 
-  void _handleLogin() {
+  Future<void> _handleLogin() async {
     setState(() {
       _passwordError = null;
     });
 
-    if (_formKey.currentState!.validate()) {
-      // Navigate to store home page on successful login
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => const StoreHomePage()),
+    if (!_formKey.currentState!.validate()) return;
+
+    setState(() => _isLoading = true);
+    try {
+      await AuthService.signInWithEmail(
+        email: _emailController.text,
+        password: _passwordController.text,
       );
+      if (!mounted) return;
+      Navigator.popUntil(context, (route) => route.isFirst);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _passwordError = AuthService.readableError(e);
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -382,7 +396,7 @@ class _LoginPageState extends State<LoginPage>
                                 width: 354,
                                 height: 60,
                                 child: ElevatedButton(
-                                  onPressed: _handleLogin,
+                                  onPressed: _isLoading ? null : _handleLogin,
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: Colors.black,
                                     foregroundColor: Colors.white,
@@ -392,16 +406,25 @@ class _LoginPageState extends State<LoginPage>
                                       borderRadius: BorderRadius.circular(30),
                                     ),
                                   ),
-                                  child: const Text(
-                                    'Login',
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 15,
-                                      fontWeight:
-                                          FontWeight.w500, // Poppins Medium
-                                      fontFamily: 'Poppins',
-                                    ),
-                                  ),
+                                  child: _isLoading
+                                      ? const SizedBox(
+                                          width: 20,
+                                          height: 20,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: Colors.white,
+                                          ),
+                                        )
+                                      : const Text(
+                                          'Login',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 15,
+                                            fontWeight:
+                                                FontWeight.w500, // Poppins Medium
+                                            fontFamily: 'Poppins',
+                                          ),
+                                        ),
                                 ),
                               ),
                             ),
@@ -415,12 +438,11 @@ class _LoginPageState extends State<LoginPage>
                                 height: 60,
                                 child: ElevatedButton(
                                   onPressed: () {
-                                    // Navigate to store home page on Google login
-                                    Navigator.pushReplacement(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (context) =>
-                                            const StoreHomePage(),
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          'Google sign-in not configured yet',
+                                        ),
                                       ),
                                     );
                                   },
