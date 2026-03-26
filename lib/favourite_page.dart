@@ -1,25 +1,26 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'cart_page.dart';
 import 'explore_page.dart';
-import 'favorites_store.dart';
 import 'product_detail_page.dart';
 import 'store_home_page.dart';
 import 'account_page.dart';
+import 'data/favorites_provider.dart';
+import 'data/product_provider.dart';
 
-class FavouritePage extends StatefulWidget {
+class FavouritePage extends ConsumerStatefulWidget {
   const FavouritePage({super.key});
 
   @override
-  State<FavouritePage> createState() => _FavouritePageState();
+  ConsumerState<FavouritePage> createState() => _FavouritePageState();
 }
 
-class _FavouritePageState extends State<FavouritePage> with TickerProviderStateMixin {
+class _FavouritePageState extends ConsumerState<FavouritePage>
+    with TickerProviderStateMixin {
   int _currentIndex = 3; // Favourite is index 3
   late List<AnimationController> _navAnimationControllers;
   late List<Animation<double>> _navScaleAnimations;
-
-  FavoritesStore get _store => FavoritesStore.instance;
 
   @override
   void initState() {
@@ -53,7 +54,8 @@ class _FavouritePageState extends State<FavouritePage> with TickerProviderStateM
 
   @override
   Widget build(BuildContext context) {
-    final items = _store.items;
+    final favoriteIds = ref.watch(favoritesProvider);
+    final productsAsync = ref.watch(allProductsProvider);
 
     return Scaffold(
       backgroundColor: Colors.white,
@@ -76,7 +78,7 @@ class _FavouritePageState extends State<FavouritePage> with TickerProviderStateM
             ),
             const Divider(height: 1, color: Color(0xFFEDEDED), thickness: 1),
             Expanded(
-              child: items.isEmpty
+              child: favoriteIds.isEmpty
                   ? const Center(
                       child: Text(
                         'No favourites yet',
@@ -88,108 +90,151 @@ class _FavouritePageState extends State<FavouritePage> with TickerProviderStateM
                         ),
                       ),
                     )
-                  : ListView.separated(
-                      padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
-                      itemCount: items.length,
-                      separatorBuilder: (_, __) => const Divider(
-                        height: 24,
-                        color: Color(0xFFEDEDED),
-                        thickness: 1,
+                  : productsAsync.when(
+                      loading: () => const Center(
+                        child: CircularProgressIndicator(),
                       ),
-                      itemBuilder: (context, index) {
-                        final p = items[index];
-                        return InkWell(
-                          borderRadius: BorderRadius.circular(14),
-                          onTap: () async {
-                            await Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => ProductDetailPage(
-                                  id: p.id,
-                                  name: p.name,
-                                  unit: p.unit,
-                                  price: p.price,
-                                  imagePath: p.imagePath,
-                                ),
-                              ),
-                            );
-                            if (mounted) setState(() {});
-                          },
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              ClipRRect(
-                                borderRadius: BorderRadius.circular(12),
-                                child: Image.asset(
-                                  p.imagePath,
-                                  width: 58,
-                                  height: 58,
-                                  fit: BoxFit.contain,
-                                  errorBuilder: (_, __, ___) => Container(
-                                    width: 58,
-                                    height: 58,
-                                    color: const Color(0xFFF4F5F9),
-                                    child: const Icon(
-                                      Icons.image,
-                                      color: Color(0xFFBDBDBD),
-                                    ),
+                      error: (e, st) => Center(
+                        child: Text(
+                          e.toString(),
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: Color(0xFF868889),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                            fontFamily: 'Poppins',
+                          ),
+                        ),
+                      ),
+                      data: (products) {
+                        final items = products
+                            .where((p) => favoriteIds.contains(p.id))
+                            .toList();
+                        return items.isEmpty
+                            ? const Center(
+                                child: Text(
+                                  'No favourites yet',
+                                  style: TextStyle(
+                                    color: Color(0xFF868889),
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w500,
+                                    fontFamily: 'Poppins',
                                   ),
                                 ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      p.name,
-                                      style: const TextStyle(
-                                        color: Colors.black,
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w600,
-                                        fontFamily: 'Poppins',
-                                      ),
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      p.unit,
-                                      style: const TextStyle(
-                                        color: Color(0xFF868889),
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w500,
-                                        fontFamily: 'Poppins',
-                                      ),
-                                    ),
-                                  ],
+                              )
+                            : ListView.separated(
+                                padding: const EdgeInsets.fromLTRB(
+                                  20,
+                                  12,
+                                  20,
+                                  12,
                                 ),
-                              ),
-                              const SizedBox(width: 12),
-                              Text(
-                                '\$${p.price.toStringAsFixed(2)}',
-                                style: const TextStyle(
-                                  color: Colors.black,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w700,
-                                  fontFamily: 'Poppins',
+                                itemCount: items.length,
+                                separatorBuilder: (_, __) => const Divider(
+                                  height: 24,
+                                  color: Color(0xFFEDEDED),
+                                  thickness: 1,
                                 ),
-                              ),
-                              const SizedBox(width: 10),
-                              IconButton(
-                                onPressed: () {
-                                  setState(() {
-                                    _store.remove(p.id);
-                                  });
+                                itemBuilder: (context, index) {
+                                  final p = items[index];
+                                  return InkWell(
+                                    borderRadius: BorderRadius.circular(14),
+                                    onTap: () async {
+                                      await Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (context) => ProductDetailPage(
+                                            id: p.id,
+                                            name: p.name,
+                                            unit: p.unit,
+                                            price: p.price,
+                                            imagePath: p.imagePath,
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                    child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.center,
+                                      children: [
+                                        ClipRRect(
+                                          borderRadius:
+                                              BorderRadius.circular(12),
+                                          child: Image.asset(
+                                            p.imagePath,
+                                            width: 58,
+                                            height: 58,
+                                            fit: BoxFit.contain,
+                                            errorBuilder: (_, __, ___) =>
+                                                Container(
+                                              width: 58,
+                                              height: 58,
+                                              color: const Color(0xFFF4F5F9),
+                                              child: const Icon(
+                                                Icons.image,
+                                                color: Color(0xFFBDBDBD),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                p.name,
+                                                style: const TextStyle(
+                                                  color: Colors.black,
+                                                  fontSize: 14,
+                                                  fontWeight: FontWeight.w600,
+                                                  fontFamily: 'Poppins',
+                                                ),
+                                              ),
+                                              const SizedBox(height: 4),
+                                              Text(
+                                                p.unit,
+                                                style: const TextStyle(
+                                                  color: Color(0xFF868889),
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.w500,
+                                                  fontFamily: 'Poppins',
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Text(
+                                          '\$${p.price.toStringAsFixed(2)}',
+                                          style: const TextStyle(
+                                            color: Colors.black,
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w700,
+                                            fontFamily: 'Poppins',
+                                          ),
+                                        ),
+                                        const SizedBox(width: 10),
+                                        IconButton(
+                                          onPressed: () {
+                                            ref
+                                                .read(favoritesProvider
+                                                    .notifier)
+                                                .toggle(p.id);
+                                          },
+                                          icon: const Icon(
+                                            Icons.close,
+                                            size: 18,
+                                            color: Color(0xFF868889),
+                                          ),
+                                          tooltip: 'Remove',
+                                        ),
+                                      ],
+                                    ),
+                                  );
                                 },
-                                icon: const Icon(
-                                  Icons.close,
-                                  size: 18,
-                                  color: Color(0xFF868889),
-                                ),
-                                tooltip: 'Remove',
-                              ),
-                            ],
-                          ),
-                        );
+                              );
                       },
                     ),
             ),

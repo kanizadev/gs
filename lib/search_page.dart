@@ -1,29 +1,32 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'cart_page.dart';
 import 'explore_page.dart';
-import 'favorites_store.dart';
 import 'favourite_page.dart';
 import 'product_detail_page.dart';
 import 'store_home_page.dart';
 import 'account_page.dart';
+import 'data/favorites_provider.dart';
 import 'data/product.dart';
 import 'data/product_repository.dart';
 
 enum _SearchSortBy { name, price }
 
-class SearchPage extends StatefulWidget {
+class SearchPage extends ConsumerStatefulWidget {
   const SearchPage({super.key, this.initialQuery = ''});
 
   final String initialQuery;
 
   @override
-  State<SearchPage> createState() => _SearchPageState();
+  ConsumerState<SearchPage> createState() => _SearchPageState();
 }
 
-class _SearchPageState extends State<SearchPage> with TickerProviderStateMixin {
+class _SearchPageState extends ConsumerState<SearchPage>
+    with TickerProviderStateMixin {
   int _currentIndex = 1; // Closest tab to Search is Explore
   late List<AnimationController> _navAnimationControllers;
   late List<Animation<double>> _navScaleAnimations;
@@ -31,18 +34,31 @@ class _SearchPageState extends State<SearchPage> with TickerProviderStateMixin {
   final TextEditingController _searchController = TextEditingController();
   String _query = '';
 
+  static const String _searchHistoryKey = 'search_history_recent';
+  List<String> _recentSearches = const <String>[];
+  bool _historyLoaded = false;
+
   RangeValues? _priceRangeFilter;
+  String? _categoryFilter;
   _SearchSortBy _sortBy = _SearchSortBy.name;
   bool _sortAscending = true;
 
-  FavoritesStore get _fav => FavoritesStore.instance;
   final ProductRepository _repo = ProductRepository();
 
+  // Unfiltered by price/sort (based on query + category). Used for slider bounds.
+  List<Product> _baseProducts = const <Product>[];
+  // Filtered by price/sort (still derived from query + category).
   List<Product> _products = const <Product>[];
+  // Unfiltered by price/sort AND category (same query). Used only to show category options.
+  List<Product> _catalogProducts = const <Product>[];
   bool _loading = false;
   String? _error;
   Timer? _debounce;
   int _requestSeq = 0;
+
+  final ScrollController _scrollController = ScrollController();
+  final int _pageSize = 10;
+  int _itemsLimit = 10;
 
   @override
   void initState() {
@@ -50,7 +66,14 @@ class _SearchPageState extends State<SearchPage> with TickerProviderStateMixin {
     _query = widget.initialQuery;
     _searchController.text = widget.initialQuery;
     _initializeNavAnimations();
-    _fetchProducts(query: _query);
+    _scrollController.addListener(_maybeLoadMore);
+    _loadSearchHistory();
+    _fetchProducts(
+      query: _query,
+      fetchBase: true,
+      fetchDisplay: true,
+      fetchCatalog: true,
+    );
   }
 
   void _initializeNavAnimations() {
@@ -72,6 +95,9 @@ class _SearchPageState extends State<SearchPage> with TickerProviderStateMixin {
   @override
   void dispose() {
     _debounce?.cancel();
+    _scrollController
+      ..removeListener(_maybeLoadMore)
+      ..dispose();
     _searchController.dispose();
     for (final c in _navAnimationControllers) {
       c.dispose();
@@ -79,24 +105,96 @@ class _SearchPageState extends State<SearchPage> with TickerProviderStateMixin {
     super.dispose();
   }
 
+  Future<void> _loadSearchHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getStringList(_searchHistoryKey);
+    if (!mounted) return;
+    setState(() {
+      _recentSearches = saved ?? const <String>[];
+      _historyLoaded = true;
+    });
+  }
+
+  Future<void> _saveSearchToHistory(String q) async {
+    final trimmed = q.trim();
+    if (trimmed.isEmpty) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final lower = trimmed.toLowerCase();
+
+    final next = <String>[
+      trimmed,
+      ..._recentSearches.where((e) => e.toLowerCase() != lower),
+    ].take(10).toList();
+
+    await prefs.setStringList(_searchHistoryKey, next);
+    if (!mounted) return;
+    setState(() => _recentSearches = next);
+  }
+
+  void _commitSearch(String q) {
+    final trimmed = q.trim();
+    if (trimmed.isEmpty) return;
+
+    _debounce?.cancel();
+    setState(() => _query = trimmed);
+
+    _saveSearchToHistory(trimmed);
+    _fetchProducts(
+      query: trimmed,
+      fetchBase: true,
+      fetchDisplay: true,
+      fetchCatalog: true,
+    );
+  }
+
+  void _selectSuggestion(String q) {
+    final trimmed = q.trim();
+    if (trimmed.isEmpty) return;
+    _searchController.value = TextEditingValue(
+      text: trimmed,
+      selection: TextSelection.collapsed(offset: trimmed.length),
+    );
+    _commitSearch(trimmed);
+  }
+
+  void _maybeLoadMore() {
+    if (_loading) return;
+    if (_itemsLimit >= _filtered.length) return;
+    if (!_scrollController.hasClients) return;
+
+    final maxScroll = _scrollController.position.maxScrollExtent;
+    final current = _scrollController.position.pixels;
+    if (current >= maxScroll - 350) {
+      setState(() {
+        _itemsLimit = (_itemsLimit + _pageSize).clamp(0, _filtered.length);
+      });
+    }
+  }
+
   double get _minPrice {
-    if (_products.isEmpty) return 0;
-    return _products
+    if (_baseProducts.isEmpty) return 0;
+    return _baseProducts
         .map((e) => e.price)
         .reduce((a, b) => a < b ? a : b);
   }
 
   double get _maxPrice {
-    if (_products.isEmpty) return 0;
-    return _products
+    if (_baseProducts.isEmpty) return 0;
+    return _baseProducts
         .map((e) => e.price)
         .reduce((a, b) => a > b ? a : b);
   }
 
   List<Product> get _filtered {
     final priceRange = _priceRangeFilter;
+    final categoryFilter = _categoryFilter?.trim().toLowerCase();
 
     final filtered = _products.where((p) {
+      if (categoryFilter != null && categoryFilter.isNotEmpty) {
+        final pc = (p.category ?? '').trim().toLowerCase();
+        if (pc != categoryFilter) return false;
+      }
       if (priceRange != null) {
         if (p.price < priceRange.start || p.price > priceRange.end) return false;
       }
@@ -122,21 +220,70 @@ class _SearchPageState extends State<SearchPage> with TickerProviderStateMixin {
   Future<void> _fetchProducts({
     required String query,
     bool forceRefresh = false,
+    bool fetchBase = false,
+    bool fetchDisplay = true,
+    bool fetchCatalog = false,
   }) async {
     final int requestId = ++_requestSeq;
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final items =
-          await _repo.searchProducts(query: query, forceRefresh: forceRefresh);
-      if (!mounted) return;
-      if (requestId != _requestSeq) return; // ignore stale responses
+
+    if (fetchBase || fetchDisplay) {
       setState(() {
-        _products = items;
-        _loading = false;
+        if (fetchDisplay) _loading = true;
+        _error = null;
       });
+    }
+
+    try {
+      // Fetch "All categories" list for building category chips.
+      if (fetchCatalog) {
+        final catalogItems = await _repo.searchProducts(
+          query: query,
+          category: null,
+          forceRefresh: forceRefresh,
+        );
+        if (!mounted) return;
+        if (requestId != _requestSeq) return; // ignore stale responses
+        setState(() {
+          _catalogProducts = catalogItems;
+        });
+      }
+
+      // Fetch unfiltered list for slider bounds.
+      if (fetchBase) {
+        final baseItems = await _repo.searchProducts(
+          query: query,
+          category: _categoryFilter,
+          forceRefresh: forceRefresh,
+        );
+        if (!mounted) return;
+        if (requestId != _requestSeq) return; // ignore stale responses
+        setState(() {
+          _baseProducts = baseItems;
+        });
+      }
+
+      // Fetch filtered/sorted list for results.
+      if (fetchDisplay) {
+        final sortByStr =
+            _sortBy == _SearchSortBy.name ? 'name' : 'price';
+
+        final items = await _repo.searchProducts(
+          query: query,
+          category: _categoryFilter,
+          minPrice: _priceRangeFilter?.start,
+          maxPrice: _priceRangeFilter?.end,
+          sortBy: sortByStr,
+          sortAscending: _sortAscending,
+          forceRefresh: forceRefresh,
+        );
+        if (!mounted) return;
+        if (requestId != _requestSeq) return; // ignore stale responses
+        setState(() {
+          _products = items;
+          _itemsLimit = _pageSize;
+          _loading = false;
+        });
+      }
     } catch (e) {
       if (!mounted) return;
       if (requestId != _requestSeq) return; // ignore stale responses
@@ -151,7 +298,12 @@ class _SearchPageState extends State<SearchPage> with TickerProviderStateMixin {
     setState(() => _query = v);
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 250), () {
-      _fetchProducts(query: _query);
+      _fetchProducts(
+        query: _query,
+        fetchBase: true,
+        fetchDisplay: true,
+        fetchCatalog: true,
+      );
     });
   }
 
@@ -159,13 +311,27 @@ class _SearchPageState extends State<SearchPage> with TickerProviderStateMixin {
     _debounce?.cancel();
     _searchController.clear();
     setState(() => _query = '');
-    _fetchProducts(query: '', forceRefresh: false);
+    _fetchProducts(
+      query: '',
+      fetchBase: true,
+      fetchDisplay: true,
+      fetchCatalog: true,
+      forceRefresh: false,
+    );
   }
 
   void _openFilterSheet() {
     final minPrice = _minPrice;
     final maxPrice = _maxPrice;
     final clampedInitialRange = _priceRangeFilter ?? RangeValues(minPrice, maxPrice);
+    final availableCategories = _catalogProducts
+        .map((p) => p.category)
+        .whereType<String>()
+        .map((c) => c.trim())
+        .where((c) => c.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
 
     showModalBottomSheet<void>(
       context: context,
@@ -180,6 +346,7 @@ class _SearchPageState extends State<SearchPage> with TickerProviderStateMixin {
         );
         _SearchSortBy tempSortBy = _sortBy;
         bool tempAscending = _sortAscending;
+        String? tempCategory = _categoryFilter;
 
         return StatefulBuilder(
           builder: (context, setModalState) {
@@ -213,6 +380,7 @@ class _SearchPageState extends State<SearchPage> with TickerProviderStateMixin {
                             tempRange = RangeValues(minPrice, maxPrice);
                             tempSortBy = _SearchSortBy.name;
                             tempAscending = true;
+                            tempCategory = null;
                           });
                         },
                         child: const Text(
@@ -227,6 +395,60 @@ class _SearchPageState extends State<SearchPage> with TickerProviderStateMixin {
                     ],
                   ),
                   const SizedBox(height: 12),
+                  if (availableCategories.isNotEmpty) ...[
+                    const Text(
+                      'Category',
+                      style: TextStyle(
+                        color: Colors.black,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        fontFamily: 'Poppins',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [
+                        ChoiceChip(
+                          label: const Text('All'),
+                          selected: tempCategory == null || tempCategory!.trim().isEmpty,
+                          onSelected: (_) => setModalState(() {
+                            tempCategory = null;
+                          }),
+                          selectedColor: const Color(0xFF6CC51D)
+                              .withValues(alpha: 0.15),
+                          labelStyle: TextStyle(
+                            color: tempCategory == null ||
+                                    tempCategory!.trim().isEmpty
+                                ? const Color(0xFF6CC51D)
+                                : Colors.black,
+                            fontFamily: 'Poppins',
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        ...availableCategories.map(
+                          (c) => ChoiceChip(
+                            label: Text(c),
+                            selected: tempCategory == c,
+                            onSelected: (_) => setModalState(() {
+                              tempCategory = c;
+                            }),
+                            selectedColor: const Color(0xFF6CC51D)
+                                .withValues(alpha: 0.15),
+                            labelStyle: TextStyle(
+                              color: tempCategory == c
+                                  ? const Color(0xFF6CC51D)
+                                  : Colors.black,
+                              fontFamily: 'Poppins',
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                  ],
                   Text(
                     'Price range: \$${tempRange.start.toStringAsFixed(2)} - \$${tempRange.end.toStringAsFixed(2)}',
                     style: const TextStyle(
@@ -331,14 +553,23 @@ class _SearchPageState extends State<SearchPage> with TickerProviderStateMixin {
                         ),
                       ),
                       onPressed: () {
+                        final categoryChanged = (_categoryFilter?.trim().toLowerCase() ?? '') !=
+                            (tempCategory?.trim().toLowerCase() ?? '');
                         setState(() {
                           final isFullRange =
                               tempRange.start <= minPrice && tempRange.end >= maxPrice;
                           _priceRangeFilter = isFullRange ? null : tempRange;
+                          _categoryFilter = tempCategory;
                           _sortBy = tempSortBy;
                           _sortAscending = tempAscending;
                         });
                         Navigator.pop(context);
+                        _fetchProducts(
+                          query: _query,
+                          fetchBase: categoryChanged,
+                          fetchDisplay: true,
+                          fetchCatalog: false,
+                        );
                       },
                       child: const Text(
                         'Apply',
@@ -359,11 +590,73 @@ class _SearchPageState extends State<SearchPage> with TickerProviderStateMixin {
     );
   }
 
+  Widget _buildSearchHistorySuggestions() {
+    if (!_historyLoaded || _recentSearches.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final trimmedQuery = _query.trim();
+    final lower = trimmedQuery.toLowerCase();
+
+    final suggestions = trimmedQuery.isEmpty
+        ? _recentSearches.take(8).toList()
+        : _recentSearches
+            .where((q) => q.toLowerCase().contains(lower))
+            .take(6)
+            .toList();
+
+    if (suggestions.isEmpty) return const SizedBox.shrink();
+
+    final label = trimmedQuery.isEmpty ? 'Recent' : 'Suggestions';
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              color: Color(0xFF868889),
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              fontFamily: 'Poppins',
+            ),
+          ),
+          const SizedBox(height: 6),
+          SizedBox(
+            height: 34,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemBuilder: (context, i) {
+                final q = suggestions[i];
+                return ActionChip(
+                  label: Text(q, style: const TextStyle(fontFamily: 'Poppins')),
+                  backgroundColor: const Color(0xFFF4F5F9),
+                  onPressed: () => _selectSuggestion(q),
+                );
+              },
+              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              itemCount: suggestions.length,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final products = _filtered;
-    final hasActiveFilters =
-        _priceRangeFilter != null || _sortBy != _SearchSortBy.name || !_sortAscending;
+    final favoriteIds = ref.watch(favoritesProvider);
+
+    final allProducts = _filtered;
+    final visibleLimit = _itemsLimit.clamp(0, allProducts.length);
+    final products = allProducts.take(visibleLimit).toList();
+
+    final hasActiveFilters = _priceRangeFilter != null ||
+        (_categoryFilter != null && _categoryFilter!.trim().isNotEmpty) ||
+        _sortBy != _SearchSortBy.name ||
+        !_sortAscending;
 
     return Scaffold(
       backgroundColor: Colors.white,
@@ -381,6 +674,7 @@ class _SearchPageState extends State<SearchPage> with TickerProviderStateMixin {
                 child: TextField(
                   controller: _searchController,
                   onChanged: _onQueryChanged,
+                  onSubmitted: (v) => _commitSearch(v),
                   textInputAction: TextInputAction.search,
                   decoration: InputDecoration(
                     hintText: 'Search',
@@ -427,13 +721,20 @@ class _SearchPageState extends State<SearchPage> with TickerProviderStateMixin {
                 ),
               ),
             ),
+            _buildSearchHistorySuggestions(),
             Expanded(
               child: Stack(
                 children: [
                   RefreshIndicator(
                     color: const Color(0xFF6CC51D),
-                    onRefresh: () => _fetchProducts(query: _query, forceRefresh: true),
-                    child: _error != null && products.isEmpty
+                    onRefresh: () => _fetchProducts(
+                      query: _query,
+                      forceRefresh: true,
+                      fetchBase: true,
+                      fetchDisplay: true,
+                      fetchCatalog: true,
+                    ),
+                    child: _error != null && allProducts.isEmpty
                         ? ListView(
                             physics: const AlwaysScrollableScrollPhysics(),
                             padding: const EdgeInsets.all(20),
@@ -459,7 +760,13 @@ class _SearchPageState extends State<SearchPage> with TickerProviderStateMixin {
                                       borderRadius: BorderRadius.circular(12),
                                     ),
                                   ),
-                                  onPressed: () => _fetchProducts(query: _query, forceRefresh: true),
+                                  onPressed: () => _fetchProducts(
+                                    query: _query,
+                                    forceRefresh: true,
+                                    fetchBase: true,
+                                    fetchDisplay: true,
+                                    fetchCatalog: true,
+                                  ),
                                   child: const Text(
                                     'Retry',
                                     style: TextStyle(
@@ -471,7 +778,7 @@ class _SearchPageState extends State<SearchPage> with TickerProviderStateMixin {
                               ),
                             ],
                           )
-                        : (products.isEmpty
+                        : (allProducts.isEmpty
                             ? ListView(
                                 physics: const AlwaysScrollableScrollPhysics(),
                                 children: const [
@@ -491,6 +798,7 @@ class _SearchPageState extends State<SearchPage> with TickerProviderStateMixin {
                               )
                             : GridView.builder(
                                 physics: const AlwaysScrollableScrollPhysics(),
+                                controller: _scrollController,
                                 padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
                                 gridDelegate:
                                     const SliverGridDelegateWithFixedCrossAxisCount(
@@ -508,7 +816,7 @@ class _SearchPageState extends State<SearchPage> with TickerProviderStateMixin {
                                   final price = p.price;
                                   final image = p.imagePath;
 
-                                  final isFav = _fav.isFavorite(id);
+                                  final isFav = favoriteIds.contains(id);
 
                                   return Container(
                                     decoration: BoxDecoration(
@@ -552,21 +860,10 @@ class _SearchPageState extends State<SearchPage> with TickerProviderStateMixin {
                                                     minHeight: 30,
                                                   ),
                                                   onPressed: () {
-                                                    setState(() {
-                                                      if (isFav) {
-                                                        _fav.remove(id);
-                                                      } else {
-                                                        _fav.add(
-                                                          FavoriteProduct(
-                                                            id: id,
-                                                            name: name,
-                                                            unit: unit,
-                                                            price: price,
-                                                            imagePath: image,
-                                                          ),
-                                                        );
-                                                      }
-                                                    });
+                                                    ref
+                                                        .read(favoritesProvider
+                                                            .notifier)
+                                                        .toggle(id);
                                                   },
                                                   icon: Icon(
                                                     isFav

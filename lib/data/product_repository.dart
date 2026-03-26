@@ -16,10 +16,59 @@ class ProductRepository {
   String _cacheKey({
     required String query,
     String? category,
+    double? minPrice,
+    double? maxPrice,
+    String? sortBy,
+    required bool sortAscending,
   }) {
     final nq = _normalizeQuery(query);
     final nc = (category ?? '').trim().toLowerCase();
-    return 'q=$nq|c=$nc';
+    final nMin = minPrice?.toStringAsFixed(2) ?? '';
+    final nMax = maxPrice?.toStringAsFixed(2) ?? '';
+    final sBy = (sortBy ?? '').trim().toLowerCase();
+    return 'q=$nq|c=$nc|min=$nMin|max=$nMax|sb=$sBy|sa=$sortAscending';
+  }
+
+  List<Product> _applyClientFiltersAndSorting({
+    required List<Product> products,
+    String? category,
+    double? minPrice,
+    double? maxPrice,
+    String? sortBy,
+    required bool sortAscending,
+  }) {
+    final normalizedCategory = category?.trim().toLowerCase();
+
+    final filtered = products.where((p) {
+      final pCategory = (p.category ?? '').trim().toLowerCase();
+      if (normalizedCategory != null && normalizedCategory.isNotEmpty) {
+        if (pCategory != normalizedCategory) return false;
+      }
+
+      if (minPrice != null && p.price < minPrice) return false;
+      if (maxPrice != null && p.price > maxPrice) return false;
+      return true;
+    }).toList();
+
+    if (sortBy == null || sortBy.trim().isEmpty) {
+      return filtered;
+    }
+
+    filtered.sort((a, b) {
+      int cmp;
+      switch (sortBy) {
+        case 'price':
+          cmp = a.price.compareTo(b.price);
+          break;
+        case 'name':
+        default:
+          cmp = a.name.compareTo(b.name);
+          break;
+      }
+      return sortAscending ? cmp : -cmp;
+    });
+
+    return filtered;
   }
 
   /// Backend endpoint contract (suggested):
@@ -28,9 +77,20 @@ class ProductRepository {
   Future<List<Product>> searchProducts({
     required String query,
     String? category,
+    double? minPrice,
+    double? maxPrice,
+    String? sortBy,
+    bool sortAscending = true,
     bool forceRefresh = false,
   }) async {
-    final key = _cacheKey(query: query, category: category);
+    final key = _cacheKey(
+      query: query,
+      category: category,
+      minPrice: minPrice,
+      maxPrice: maxPrice,
+      sortBy: sortBy,
+      sortAscending: sortAscending,
+    );
     final now = DateTime.now();
     final cached = _searchCache[key];
     if (!forceRefresh && cached != null && cached.isFresh(now, _searchCacheTtl)) {
@@ -42,6 +102,13 @@ class ProductRepository {
       if (category != null && category.trim().isNotEmpty) {
         q['category'] = category.trim();
       }
+      if (minPrice != null) q['minPrice'] = minPrice;
+      if (maxPrice != null) q['maxPrice'] = maxPrice;
+      if (sortBy != null && sortBy.trim().isNotEmpty) {
+        q['sortBy'] = sortBy.trim();
+        q['sortOrder'] = sortAscending ? 'asc' : 'desc';
+      }
+
       final json = await _api.getJson('/products', query: q);
 
       final items = json['items'];
@@ -50,28 +117,47 @@ class ProductRepository {
             .whereType<Map>()
             .map((e) => Product.fromJson(e.cast<String, dynamic>()))
             .toList();
-        _searchCache[key] = _CacheEntry(parsed, now);
-        return parsed;
+        final finalProducts = _applyClientFiltersAndSorting(
+          products: parsed,
+          category: category,
+          minPrice: minPrice,
+          maxPrice: maxPrice,
+          sortBy: sortBy,
+          sortAscending: sortAscending,
+        );
+        _searchCache[key] = _CacheEntry(finalProducts, now);
+        return finalProducts;
       }
 
       throw ApiException('Invalid products payload');
     } catch (_) {
       if (!AppConfig.allowDemoFallback) rethrow;
-      final parsed = _demoProducts
-          .where(
-            (p) {
-              final matchesQuery = query.trim().isEmpty
-                  ? true
-                  : p.name.toLowerCase().contains(query.trim().toLowerCase());
-              if (!matchesQuery) return false;
-              if (category == null || category.trim().isEmpty) return true;
-              return (p.category ?? '').toLowerCase() ==
-                  category.trim().toLowerCase();
-            },
-          )
-          .toList();
-      _searchCache[key] = _CacheEntry(parsed, now);
-      return parsed;
+
+      final trimmedQuery = query.trim().toLowerCase();
+      final demoFiltered = _demoProducts.where((p) {
+        final matchesQuery = trimmedQuery.isEmpty
+            ? true
+            : p.name.toLowerCase().contains(trimmedQuery);
+
+        if (!matchesQuery) return false;
+
+        final normalizedCategory = category?.trim().toLowerCase();
+        if (normalizedCategory == null || normalizedCategory.isEmpty) return true;
+
+        return (p.category ?? '').trim().toLowerCase() == normalizedCategory;
+      }).toList();
+
+      final finalProducts = _applyClientFiltersAndSorting(
+        products: demoFiltered,
+        category: category,
+        minPrice: minPrice,
+        maxPrice: maxPrice,
+        sortBy: sortBy,
+        sortAscending: sortAscending,
+      );
+
+      _searchCache[key] = _CacheEntry(finalProducts, now);
+      return finalProducts;
     }
   }
 
